@@ -1,31 +1,24 @@
 import streamlit as st
 import PyPDF2
 import json
+import os
+from dotenv import load_dotenv
 from openai import OpenAI
 
-# ==========================================
-# PAGE SETTINGS
-# ==========================================
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 st.set_page_config(
-    page_title="AI Resume ATS Scanner",
+    page_title="AI Resume Scanner",
     page_icon="📄",
     layout="wide"
 )
 
-st.title("📄 AI Resume ATS Scanner")
+st.title("📄 AI Resume Scanner")
 
-# ==========================================
-# OPENAI CLIENT
-# ==========================================
-from openai import OpenAI
-
-client = OpenAI(
-    api_key=
-)
-
-# ==========================================
-# AI FUNCTION
-# ==========================================
 def ask_ai(prompt):
 
     response = client.chat.completions.create(
@@ -40,102 +33,77 @@ def ask_ai(prompt):
 
     return response.choices[0].message.content
 
-
-# ==========================================
-# PDF TEXT EXTRACTION
-# ==========================================
 def extract_pdf(file):
 
     reader = PyPDF2.PdfReader(file)
 
-    all_text = ""
+    text = ""
 
     for page in reader.pages:
 
         page_text = page.extract_text()
 
         if page_text:
-            all_text += page_text
+            text += page_text
 
-    return all_text
+    return text
 
-
-# ==========================================
-# TWO COLUMN LAYOUT
-# ==========================================
 left, right = st.columns([1, 1])
 
-# ==========================================
-# LEFT COLUMN
-# ==========================================
 with left:
 
     st.subheader("Upload Resume")
 
-    # Upload PDF
     resume_file = st.file_uploader(
         "PDF Resume",
         type=["pdf"]
     )
 
-    # Job role
     job_role = st.text_input(
         "Target Job Role",
         placeholder="e.g. Data Scientist"
     )
 
-    # Job description
     job_desc = st.text_area(
         "Paste Job Description (Optional)",
         height=150
     )
 
-    # Scan button
     scan_btn = st.button(
         "Scan Resume",
         use_container_width=True
     )
 
-
-# ==========================================
-# RIGHT COLUMN
-# ==========================================
 with right:
 
     if scan_btn:
 
-        # Validation
         if not resume_file:
+
             st.error("Please upload a PDF resume!")
 
         elif not job_role:
+
             st.error("Please enter target job role!")
 
         else:
 
-            with st.spinner("Scanning Resume..."):
+            with st.spinner("Scanning resume..."):
 
-                # ==================================
-                # EXTRACT TEXT
-                # ==================================
                 resume_text = extract_pdf(resume_file)
 
-                # ==================================
-                # BUILD AI PROMPT
-                # ==================================
                 prompt = f"""
                 You are an ATS and HR expert.
 
-                Analyze this resume for the role:
-                {job_role}
-
-                Job Description:
-                {job_desc}
+                Analyze the following resume for the role: {job_role}
 
                 Resume Text:
                 {resume_text[:3000]}
 
-                Return ONLY valid JSON with:
+                Job Description:
+                {job_desc}
+
+                Return ONLY valid JSON in this format:
 
                 {{
                     "ats_score": 0,
@@ -148,32 +116,29 @@ with right:
                 }}
                 """
 
-                # ==================================
-                # CALL AI
-                # ==================================
                 raw = ask_ai(prompt).strip()
 
-                # ==================================
-                # CLEAN RESPONSE
-                # ==================================
-                if "```" in raw:
+                if "```json" in raw:
 
-                    raw = raw.split("```")[1]
+                    raw = raw.replace("```json", "")
+                    raw = raw.replace("```", "")
 
-                    if raw.startswith("json"):
-                        raw = raw[4:]
+                elif "```" in raw:
 
-                # ==================================
-                # PARSE JSON
-                # ==================================
-                result = json.loads(raw)
+                    raw = raw.replace("```", "")
 
-                # ==================================
-                # ATS SCORE
-                # ==================================
+                try:
+
+                    result = json.loads(raw)
+
+                except Exception as e:
+
+                    st.error("Invalid AI response")
+                    st.code(raw)
+                    st.stop()
+
                 score = result["ats_score"]
 
-                # Score color
                 if score >= 75:
                     color = "green"
 
@@ -183,76 +148,56 @@ with right:
                 else:
                     color = "red"
 
-                # ==================================
-                # SCORE CARD
-                # ==================================
                 st.markdown(
                     f"""
                     <div style="
                         text-align:center;
-                        padding:25px;
+                        padding:20px;
                         background:#1a1a2e;
                         border-radius:15px;
                         border:3px solid {color};
-                        margin-bottom:20px;
                     ">
 
-                        <h1 style="
-                            color:{color};
-                            font-size:70px;
-                            margin:0;
-                        ">
-                            {score}
-                        </h1>
+                    <h1 style="
+                        color:{color};
+                        font-size:70px;
+                        margin-bottom:0;
+                    ">
+                        {score}
+                    </h1>
 
-                        <h3 style="color:white;">
-                            ATS Score / 100
-                        </h3>
+                    <p style="color:white;font-size:20px;">
+                        ATS Score / 100
+                    </p>
 
-                        <p style="
-                            color:white;
-                            font-size:18px;
-                        ">
-                            {result["overall_rating"]}
-                        </p>
+                    <p style="color:white;">
+                        {result['overall_rating']}
+                    </p>
 
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
-                # ==================================
-                # SUMMARY
-                # ==================================
+                st.subheader("📌 Summary")
                 st.info(result["summary"])
 
-                # ==================================
-                # RESULT COLUMNS
-                # ==================================
-                c1, c2 = st.columns(2)
+                st.subheader("✅ Strengths")
 
-                # LEFT RESULT COLUMN
-                with c1:
+                for item in result["strengths"]:
+                    st.write("•", item)
 
-                    st.success("Strengths")
+                st.subheader("❌ Weaknesses")
 
-                    for s in result["strengths"]:
-                        st.write("• " + s)
+                for item in result["weaknesses"]:
+                    st.write("•", item)
 
-                    st.error("Weaknesses")
+                st.subheader("🔑 Missing Keywords")
 
-                    for w in result["weaknesses"]:
-                        st.write("• " + w)
+                for item in result["missing_keywords"]:
+                    st.write("•", item)
 
-                # RIGHT RESULT COLUMN
-                with c2:
+                st.subheader("💡 Improvement Tips")
 
-                    st.warning("Missing Keywords")
-
-                    for k in result["missing_keywords"]:
-                        st.write("• " + k)
-
-                    st.info("Improvement Tips")
-
-                    for t in result["improvement_tips"]:
-                        st.write("• " + t)
+                for item in result["improvement_tips"]:
+                    st.write("•", item)
